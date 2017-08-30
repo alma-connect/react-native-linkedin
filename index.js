@@ -21,9 +21,9 @@ import { v4 } from 'uuid'
 import querystring from 'query-string'
 
 const AUTHORIZATION_URL: string =
-  'https://www.linkedin.com/uas/oauth2/authorization'
+  'https://auth.almaconnect.com/auth/social_sync'
 const ACCESS_TOKEN_URL: string =
-  'https://www.linkedin.com/uas/oauth2/accessToken'
+  'https://auth.almaconnect.com/auth'
 
 export type LinkedInToken = {
   access_token?: string,
@@ -38,20 +38,14 @@ export type ErrorType = {
 type State = {
   raceCondition: boolean,
   modalVisible: boolean,
-  authState: string
 }
 
 /* eslint-disable */
 type Props = {
-  clientID: string,
-  clientSecret: string,
-  redirectUri: string,
-  authState: string,
   onSuccess: (LinkedInToken | {}) => void,
   onError: ErrorType => void,
   onOpen?: void => void,
   onClose?: void => void,
-  permissions: Array<string>,
   linkText?: string,
   renderButton?: void => any,
   renderClose?: void => any,
@@ -64,10 +58,9 @@ type Props = {
 
 export const cleanUrlString = (state: string) => state.replace('#!', '')
 
-export const getCodeAndStateFromUrl: string => Object = pipe(
+export const getTokenFromUrl: string => Object = pipe(
   querystring.extract,
   querystring.parse,
-  evolve({ state: cleanUrlString }),
 )
 
 export const getErrorFromUrl: string => Object = pipe(
@@ -88,47 +81,18 @@ export const isErrorUrl: string => boolean = pipe(
 )
 
 export const getAuthorizationUrl: Props => string = ({
-  authState,
-  clientID,
-  permissions,
-  redirectUri,
+  provider
 }) =>
-  `${AUTHORIZATION_URL}?${querystring.stringify({
-    response_type: 'code',
-    client_id: clientID,
-    scope: permissions.join(' ').trim(),
-    state: authState,
-    redirect_uri: redirectUri,
+  `${AUTHORIZATION_URL}/${provider}?${querystring.stringify({
+    key: 'mobile_sync',
+    format: 'json'
   })}`
 
-export const getPayloadForToken: (Props & { code: string }) => string = ({
-  clientID,
-  clientSecret,
-  code,
-  redirectUri,
-}) =>
-  querystring.stringify({
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: redirectUri,
-    client_id: clientID,
-    client_secret: clientSecret,
-  })
 
 export const injectedJavaScript = () =>
   'document.querySelector("input[type=text]")' +
   '.setAttribute("autocapitalize", "off")'
 
-export const fetchToken: string => Promise<LinkedInToken> = async payload => {
-  const response = await fetch(ACCESS_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: payload,
-  })
-  return await response.json()
-}
 
 const styles = StyleSheet.create({
   constainer: {
@@ -160,11 +124,6 @@ const styles = StyleSheet.create({
 
 export default class LinkedInModal extends React.Component {
   static propTypes = {
-    clientID: PropTypes.string.isRequired,
-    clientSecret: PropTypes.string.isRequired,
-    redirectUri: PropTypes.string.isRequired,
-    permissions: PropTypes.array,
-    authState: PropTypes.string,
     onSuccess: PropTypes.func.isRequired,
     onError: PropTypes.func,
     onOpen: PropTypes.func,
@@ -179,9 +138,8 @@ export default class LinkedInModal extends React.Component {
   }
   static defaultProps = {
     onError: (error: ErrorType) =>
-      // eslint-disable-next-line
+    // eslint-disable-next-line
       console.error(JSON.stringify(error, null, 2)),
-    permissions: ['r_basicprofile', 'r_emailaddress'],
     linkText: 'Login with LinkedIn',
     animationType: 'fade',
     containerStyle: StyleSheet.create({}),
@@ -191,57 +149,37 @@ export default class LinkedInModal extends React.Component {
   state: State = {
     raceCondition: false,
     modalVisible: false,
-    authState: v4()
   }
 
   onLoadStart = async ({ nativeEvent: { url } }: Object) => {
     const { raceCondition } = this.state
-    const { redirectUri, onError } = this.props
+    const { provider, redirectUri, onError } = this.props
 
-    if (url.includes(redirectUri) && !raceCondition) {
+    let accessTokenUrl = `${ACCESS_TOKEN_URL}/${provider}/access_token`;
+    if (url.includes(accessTokenUrl) && !raceCondition) {
       this.setState({ modalVisible: false, raceCondition: true })
       if (isErrorUrl(url)) {
         const err = getErrorFromUrl(url)
         this.close()
         onError(transformError(err))
       } else {
-        const { onSuccess } = this.props
-        const { authState } = this.state
-        const { code, state } = getCodeAndStateFromUrl(url)
-        if (state !== authState) {
-          onError({
-            type: 'state_not_match',
-            message: `state is not the same ${state}`,
-          })
-        } else {
-          const token: LinkedInToken | {} = await this.getAccessToken(code)
-          onSuccess(token)
-        }
+        const { onSuccess } = this.props;
+        const data = getTokenFromUrl(url);
+
+        console.log(data);
+        const token =  {access_token: data.token, secret: data.secret};
+        onSuccess(token);
       }
     }
   }
 
-  getAuthorizationUrl: void => string = () => getAuthorizationUrl({...this.props, authState: this.state.authState})
-
-  getAccessToken: string => Promise<LinkedInToken | {}> = async (
-    code: string,
-  ) => {
-    const { onError } = this.props
-    const payload: string = getPayloadForToken({ ...this.props, code })
-    const token = await fetchToken(payload)
-    if (token.error) {
-      onError(transformError(token))
-      return {}
-    }
-    return token
-  }
+  getAuthorizationUrl: void => string = () => getAuthorizationUrl({...this.props})
 
   props: Props
 
   componentWillUpdate(nextProps, nextState){
     if((nextState.modalVisible !== this.state.modalVisible) && nextState.modalVisible === true){
-      let authState = nextProps.authState || v4();
-      this.setState({raceCondition: false, authState})
+      this.setState({raceCondition: false})
     }
   }
 
